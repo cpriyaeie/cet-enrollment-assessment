@@ -41,6 +41,12 @@ This repository contains the data ingestion pipeline for loading Continuous Educ
 * **Participant Name Standardization:** Resolves inconsistent naming variations per `participant_id` (e.g., `"Fiona W"` -> `"Fiona Wong"`, `"Charles Ng"` -> `"Charlie Ng"`) by keeping the fullest name observed.
 * **Financial & Idempotency Checks:** Enforces non-negative financial values, validates that `subsidy + credits_used <= amount`, and uses `ON CONFLICT(enrollment_id) DO UPDATE` so re-running the pipeline safely upserts records without creating duplicates.
 
+
+## Section 2: Database Schema Design Considerations
+See [docs/section2_schema_design.md](docs/section2_schema_design.md) for the full design covering Medallion layers (Bronze, Silver, Gold), many-to-many relationships, data quality checks, and Gold layer analytical modeling.
+
+
+
 ## Section 3: Prerequisite Compliance Report
 
 ### How to Run
