@@ -58,4 +58,6 @@ sqlite3 -header -column courses.db < prerequisite_report.sql
 ### Overview
 Unpacks each course's JSON `prerequisites` array using SQLite's `json_each()` and identifies participants who registered for a course without completing all required prerequisite courses prior to their `course_date.
 
+## Section 4: Scaling ML Inference for 200M Courses
+See [docs/section4_ml_scaling.md](docs/section4_ml_scaling.md) for the bottleneck analysis and how to optimize both SageMaker serving and the calling script.
 
