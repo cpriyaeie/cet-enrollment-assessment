@@ -8,12 +8,17 @@ This repository contains the data ingestion pipeline for loading Continuous Educ
 
 ```text
 ├── data/
-│   └── enrolments.csv      # Raw CET course enrollment submission CSV
+│   └── enrolments.csv                # Raw CET course enrollment submission CSV
+├──docs/
+   └──section2_schema_design.md       # Database schema & Medallion architecture design
+   └──section4_ml_scaling.md          # ML inference bottleneck analysis & optimization
 ├── sql/
-│   └── tables/             # DDL scripts defining courses & enrolments tables
-├── courses.db              # SQLite database populated by ingest.py
-├── ingest.py               # Python ETL script to validate and load CSV data into SQLite
-└── README.md               # Setup and pipeline documentation
+    └── reports
+        /prerequisite_report.sql      # SQLite report identifying prerequisite violations
+│   └── tables/                       # DDL scripts defining courses & enrolments tables
+├── courses.db                        # SQLite database populated by ingest.py
+├── ingest.py                         # Python ETL script to validate and load CSV data into SQLite
+└── README.md                         # Setup and pipeline documentation
 ```
 
 ---
@@ -49,11 +54,9 @@ See [docs/section2_schema_design.md](docs/section2_schema_design.md) for the ful
 
 ## Section 3: Prerequisite Compliance Report
 
-### How to Run
-Execute `prerequisite_report.sql` against `courses.db`:
-```bash
-sqlite3 -header -column courses.db < prerequisite_report.sql
-```
+Execute sql/reports/prerequisite_report.sql against courses.db:
+bash
+sqlite3 -header -column courses.db < sql/reports/prerequisite_report.sql
 
 ### Overview
 Unpacks each course's JSON `prerequisites` array using SQLite's `json_each()` and identifies participants who registered for a course without completing all required prerequisite courses prior to their `course_date.
