@@ -17,7 +17,7 @@ This repository contains the data ingestion pipeline for loading Continuous Educ
 ```
 
 ---
-
+## Section 1: Data Ingestion Pipeline
 ## Setup & Execution
 
 1. Ensure **Python 3.8+** is installed (uses standard library modules only: `csv`, `sqlite3`, `datetime`, `pathlib`).
@@ -40,3 +40,16 @@ This repository contains the data ingestion pipeline for loading Continuous Educ
   * Invalid rows are logged and skipped so the remaining **32 valid records** load cleanly without corrupting downstream reporting.
 * **Participant Name Standardization:** Resolves inconsistent naming variations per `participant_id` (e.g., `"Fiona W"` -> `"Fiona Wong"`, `"Charles Ng"` -> `"Charlie Ng"`) by keeping the fullest name observed.
 * **Financial & Idempotency Checks:** Enforces non-negative financial values, validates that `subsidy + credits_used <= amount`, and uses `ON CONFLICT(enrollment_id) DO UPDATE` so re-running the pipeline safely upserts records without creating duplicates.
+
+## Section 3: Prerequisite Compliance Report
+
+### How to Run
+Execute `prerequisite_report.sql` against `courses.db`:
+```bash
+sqlite3 -header -column courses.db < prerequisite_report.sql
+```
+
+### Overview
+Unpacks each course's JSON `prerequisites` array using SQLite's `json_each()` and identifies participants who registered for a course without completing all required prerequisite courses prior to their `course_date.
+
+
