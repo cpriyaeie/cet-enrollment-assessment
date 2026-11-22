@@ -1,53 +1,50 @@
 # Section 2: Database Schema Design Considerations
 
-## 1. Modeling Across Bronze, Silver, and Gold Layers
+## 1. Bronze, Silver, and Gold Layers
 
-* **Bronze Layer (Raw Landing & Audit Trail)**
-  * **Modeling:** Stores raw CSV submissions as `TEXT` alongside ingestion metadata (`_ingestion_id`, `_source_filename`, `_ingested_at`, `_row_hash`).
-  * **Transformations:** None to business values. Preserves an immutable audit trail if a CET centre disputes subsidy or credit calculations.
-* **Silver Layer (Cleansed, Conformed & Normalized)**
-  * **Modeling:** Enforces the relational schema (`courses`, `enrollments`, `participants`, and `course_prerequisites`) with strict data types (`INTEGER`, `REAL`, `DATE`).
-  * **Transformations:**
-    * Standardizes heterogeneous date formats into ISO `YYYY-MM-DD`.
-    * Deduplicates records on `enrollment_id` using latest-timestamp `UPSERT` logic.
-    * Resolves canonical `participant_name` values per `participant_id`.
-    * Explodes JSON `prerequisites` arrays into normalized relational rows.
-* **Gold Layer (Curated Analytical Models)**
-  * **Modeling:** Implements a **Star Schema** (`fact_enrollments`, `dim_courses`, `dim_participants`, `dim_date`) plus pre-aggregated summary tables.
-  * **Transformations:** Computes derived financial metrics (`net_cash_payable = amount - subsidy - credits_used`), attaches compliance flags (`is_prerequisite_met`), and aggregates monthly/quarterly credit utilization by CET provider.
+* **Bronze Layer (Raw Data)**
+  * **Design:** Stores the exact raw CSV rows as `TEXT` along with ingestion metadata (`filename`, `ingested_at`, `row_hash`).
+  * **Transformations:** None. Keeps an untouched audit trail in case a CET centre disputes a payout.
+
+* **Silver Layer (Cleaned & Normalized Data)**
+  * **Design:** Enforces proper data types (`INTEGER`, `REAL`, `DATE`) and splits data into clean relational tables (`courses`, `enrollments`, `participants`, `course_prerequisites`).
+  * **Transformations:** Standardizes date formats to `YYYY-MM-DD`, deduplicates `enrollment_id`s, fixes inconsistent participant names, and unpacks the JSON `prerequisites` array.
+
+* **Gold Layer (Analytics & Reporting)**
+  * **Design:** Uses a **Star Schema** (`fact_enrollments`, `dim_courses`, `dim_participants`, `dim_date`) plus pre-aggregated monthly summary tables.
+  * **Transformations:** Calculates `net_cash_payable` (`amount - subsidy - credits_used`), adds a `has_prerequisites_met` flag, and rolls up credit usage by course and month.
 
 ---
 
 ## 2. Handling Many-to-Many (M:N) Relationships
 
-* **Learners ↔ Courses (via `enrollments`):**
-  * A learner can register for multiple courses, and each course has many learners. The `enrollments` table resolves this M:N relationship as an associative transaction table linking `participants` (`1:N`) and `courses` (`1:N`).
-  * Separating `participants` into its own entity in Silver avoids update anomalies when a learner's name changes across submissions.
+* **Participants ↔ Courses (via `enrollments`):**
+  * One learner can take many courses, and one course has many learners. The `enrollments` table acts as a bridge table connecting `participants` (`1:N`) and `courses` (`1:N`).
+  * Keeping `participants` in a separate dimension table prevents name-update issues across multiple enrollments.
+
 * **Courses ↔ Prerequisite Courses (Self-Referencing M:N):**
-  * While the raw `courses` table stores prerequisites as a JSON array (e.g., ``), querying JSON arrays at scale prevents foreign key enforcement and slows down dependency checks.
-  * In the Silver layer, the JSON array is normalized into a self-referencing bridge table (`course_prerequisites`) with composite primary key `(course_id, prerequisite_course_id)`, foreign keys referencing `courses(course_id)`, and a `CHECK (course_id <> prerequisite_course_id)` constraint to prevent self-loops.
+  * Storing prerequisites as a JSON array (e.g., ``) works for raw ingestion, but is slow to query and cannot enforce foreign keys.
+  * In the Silver layer, we unpack the JSON array into a dedicated junction table (`course_prerequisites`) with `(course_id, prerequisite_course_id)` as a composite primary key, foreign keys back to `courses(course_id)`, and a check preventing a course from requiring itself.
 
 ---
 
 ## 3. Data Quality Checks Between Layers
 
-| Layer Transition | Validation / Rule | Action on Failure |
+| Transition | Check | Action on Failure |
 | :--- | :--- | :--- |
-| **Bronze → Silver** | **Type & Calendar Validity:** Ensure `course_date` is a valid calendar date within realistic operational bounds (`2000–2030`). | Reject file atomically and return row-level error report to the CET centre. |
-| **Bronze → Silver** | **Financial Reconciliation:** Enforce `amount >= 0`, `subsidy >= 0`, `credits_used >= 0`, and `subsidy + credits_used <= amount`. | Block over-disbursement claims and reject invalid submissions. |
-| **Bronze → Silver** | **Duplicate Claim Prevention:** Enforce uniqueness on `enrollment_id` and composite `(participant_id, course_id, course_date)`. | Reject duplicate subsidy/credit claims for the same learner-course-date. |
-| **Bronze → Silver** | **Referential Integrity:** Verify `course_id` exists in `courses`. | Enforce foreign key constraints; reject orphan course references. |
-| **Silver → Gold** | **Prerequisite Eligibility:** Verify all `prerequisite_course_id`s were completed prior to `course_date`. | Populate `is_prerequisite_met = 0` in `fact_enrollments` for compliance reporting. |
+| **Bronze → Silver** | **Valid Dates:** Ensure `course_date` is a real calendar date within valid operational years. | Reject the file and return a row-by-row error report to the CET centre. |
+| **Bronze → Silver** | **Financial Rules:** Ensure amounts are non-negative and `subsidy + credits_used <= amount`. | Reject invalid claims to prevent credit over-disbursement. |
+| **Bronze → Silver** | **No Duplicate Claims:** Check uniqueness on `enrollment_id` and `(participant_id, course_id, course_date)`. | Block duplicate submissions for the same learner and course date. |
+| **Silver → Gold** | **Prerequisite Check:** Verify required prerequisite courses were completed prior to `course_date`. | Flag non-compliant registrations (`has_prerequisites_met = 0`) for audit. |
 
 ---
 
-## 4. Designing the Gold Layer for Efficient Analytical Queries
+## 4. Designing the Gold Layer for Fast Queries
 
-* **Star Schema Design:**
-  * `fact_enrollments`: Grain of one row per valid enrollment, storing foreign keys (`course_key`, `participant_key`, `date_key`) and additive measures (`amount`, `subsidy`, `credits_used`, `net_cash_payable`, `is_prerequisite_met`).
-  * `dim_courses` (SCD Type 2): Tracks changes to course fees or prerequisite rules over time (`effective_from`, `effective_to`, `is_current`) so historical compliance audits evaluate rules active on the enrollment date.
-  * `dim_participants`: Stores unique learner profiles, total lifetime credits utilized, and enrollment counts.
-  * `dim_date`: Pre-populated calendar dimension supporting Singapore fiscal year (`Apr–Mar`), quarter, and month roll-ups without runtime date parsing.
-* **Performance Optimizations:**
-  * **Composite Covering Indexes:** Index high-selectivity filter and join columns (e.g., `(date_key, course_key)` and `(participant_key, course_key, date_key)`).
-  * **Pre-Aggregated Summary Tables:** Maintain `gold_monthly_disbursement_summary` grouped by fiscal period and course to power executive dashboards in milliseconds without scanning raw fact rows.
+* **Star Schema:**
+  * `fact_enrollments` stores transaction metrics (`amount`, `subsidy`, `credits_used`, `net_cash_payable`) linked to `dim_courses`, `dim_participants`, and `dim_date`.
+  * `dim_courses` tracks historical changes to course fees or prerequisites over time (SCD Type 2) so past enrollments are evaluated against the rules active at that time.
+  * `dim_date` pre-computes year, quarter, month, and Singapore fiscal year (`Apr–Mar`) attributes for fast filtering.
+* **Query Speed Optimizations:**
+  * Add composite indexes on common filter columns such as `(date_key, course_key)`.
+  * Maintain pre-aggregated monthly summary tables for dashboards so reports do not need to scan every raw enrollment row.
